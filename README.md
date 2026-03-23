@@ -4,7 +4,7 @@ An intelligent Python tool that connects to your database, analyzes its schema a
 
 ## Features
 
-- **Database Connection**: Supports PostgreSQL and MySQL databases
+- **Database Connection**: Supports PostgreSQL, MySQL, and SQL Server databases
 - **Schema Discovery**: Automatically analyzes table structures, columns, and relationships
 - **Relationship Analysis**: Identifies primary keys and foreign key dependencies
 - **Statistics Collection**: Gathers data distribution information including:
@@ -42,6 +42,13 @@ For MySQL:
 pip install mysql-connector-python
 ```
 
+For SQL Server:
+```bash
+pip install pyodbc
+```
+
+Note: SQL Server also requires the [ODBC Driver 17 for SQL Server](https://docs.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server) to be installed on your system.
+
 ## Usage
 
 ### Basic Usage
@@ -64,9 +71,27 @@ python test_data_generator.py \
   --output-json test_data.json
 ```
 
+**SQL Server:**
+```bash
+python test_data_generator.py \
+  --db-type sqlserver \
+  --connection "mssql://user:password@localhost:1433/mydb" \
+  --num-rows 100 \
+  --output-sql test_data.sql
+```
+
+Alternatively, you can use a full ODBC connection string for SQL Server:
+```bash
+python test_data_generator.py \
+  --db-type sqlserver \
+  --connection "Driver={ODBC Driver 17 for SQL Server};Server=localhost;Database=mydb;UID=user;PWD=password" \
+  --num-rows 100 \
+  --output-sql test_data.sql
+```
+
 ### Command Line Arguments
 
-- `--db-type`: Database type (`postgresql`, `postgres`, or `mysql`) - **Required**
+- `--db-type`: Database type (`postgresql`, `postgres`, `mysql`, `sqlserver`, or `mssql`) - **Required**
 - `--connection`: Database connection string - **Required**
 - `--num-rows`: Number of rows to generate per table (default: 100)
 - `--output-sql`: Path to output SQL file
@@ -147,6 +172,7 @@ The tool is organized into several key classes:
 - **DatabaseConnector**: Abstract base class for database connections
   - `PostgreSQLConnector`: PostgreSQL implementation
   - `MySQLConnector`: MySQL implementation (extensible)
+  - `SQLServerConnector`: SQL Server implementation
 - **SchemaAnalyzer**: Analyzes database schema and relationships
 - **TestDataGenerator**: Generates test data based on schema and statistics
 
@@ -259,7 +285,7 @@ Then register it in the `create_connector` factory function.
 
 Contributions are welcome! Areas for improvement:
 - Complete MySQL connector implementation
-- Add support for more databases (SQLite, SQL Server, Oracle)
+- Add support for more databases (SQLite, Oracle)
 - Enhanced data generation patterns
 - Support for complex constraints (CHECK, UNIQUE)
 - Performance optimizations for large schemas
@@ -276,7 +302,7 @@ MIT License - see LICENSE file for details
 - Check firewall and network settings
 
 **Missing dependencies:**
-- Install the appropriate database driver: `psycopg2-binary` or `mysql-connector-python`
+- Install the appropriate database driver: `psycopg2-binary`, `mysql-connector-python`, or `pyodbc`
 
 **Memory issues with large datasets:**
 - Reduce `--num-rows` parameter

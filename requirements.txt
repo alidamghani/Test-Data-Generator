@@ -1,6 +1,7 @@
 # Database connectors - install the one you need
 psycopg2-binary>=2.9.0  # PostgreSQL
 # mysql-connector-python>=8.0.0  # MySQL (uncomment if needed)
+# pyodbc>=4.0.0  # SQL Server (uncomment if needed)
 
 # Optional dependencies for enhanced data generation
 faker>=18.0.0  # For realistic fake data (optional)

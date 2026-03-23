@@ -326,6 +326,217 @@ class MySQLConnector(DatabaseConnector):
         raise NotImplementedError("MySQL statistics collection not yet fully implemented")
 
 
+class SQLServerConnector(DatabaseConnector):
+    """SQL Server-specific database connector"""
+    
+    def connect(self):
+        """Establish SQL Server connection"""
+        try:
+            import pyodbc
+            # Parse connection string (format: mssql://user:password@host:port/database or full connection string)
+            if 'Driver=' in self.connection_string or 'DRIVER=' in self.connection_string:
+                # Full ODBC connection string
+                self.connection = pyodbc.connect(self.connection_string)
+            else:
+                # Parse simplified connection string (format: mssql://user:password@host:port/database)
+                parts = self.connection_string.replace('mssql://', '').replace('sqlserver://', '').split('@')
+                user_pass = parts[0].split(':')
+                host_db = parts[1].split('/')
+                host_port = host_db[0].split(':')
+                
+                conn_str = (
+                    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+                    f"SERVER={host_port[0]}"
+                    f"{','+host_port[1] if len(host_port) > 1 else ''};"
+                    f"DATABASE={host_db[1] if len(host_db) > 1 else ''};"
+                    f"UID={user_pass[0]};"
+                    f"PWD={user_pass[1] if len(user_pass) > 1 else ''}"
+                )
+                self.connection = pyodbc.connect(conn_str)
+            print(f"Connected to SQL Server database")
+        except ImportError:
+            raise ImportError("pyodbc is required for SQL Server connections. Install with: pip install pyodbc")
+        except Exception as e:
+            raise ConnectionError(f"Failed to connect to SQL Server: {e}")
+    
+    def execute_query(self, query: str, params: Optional[tuple] = None) -> List[tuple]:
+        """Execute a query and return results"""
+        cursor = self.connection.cursor()
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def get_tables(self) -> List[str]:
+        """Get list of all tables in the database"""
+        query = """
+            SELECT TABLE_NAME 
+            FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_TYPE = 'BASE TABLE'
+            AND TABLE_SCHEMA = 'dbo'
+            ORDER BY TABLE_NAME
+        """
+        results = self.execute_query(query)
+        return [row[0] for row in results]
+    
+    def get_table_schema(self, table_name: str) -> TableInfo:
+        """Get schema information for a specific table"""
+        # Get column information
+        column_query = """
+            SELECT 
+                c.COLUMN_NAME,
+                c.DATA_TYPE,
+                c.IS_NULLABLE,
+                c.CHARACTER_MAXIMUM_LENGTH,
+                c.NUMERIC_PRECISION,
+                c.NUMERIC_SCALE,
+                CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END as IS_PRIMARY_KEY,
+                CASE WHEN fk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END as IS_FOREIGN_KEY,
+                fk.REFERENCED_TABLE_NAME,
+                fk.REFERENCED_COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS c
+            LEFT JOIN (
+                SELECT ku.COLUMN_NAME
+                FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+                JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku 
+                    ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
+                WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                    AND tc.TABLE_NAME = ?
+            ) pk ON c.COLUMN_NAME = pk.COLUMN_NAME
+            LEFT JOIN (
+                SELECT 
+                    kcu.COLUMN_NAME,
+                    OBJECT_NAME(fk.referenced_object_id) AS REFERENCED_TABLE_NAME,
+                    COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS REFERENCED_COLUMN_NAME
+                FROM sys.foreign_keys fk
+                JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+                JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu 
+                    ON fk.name = kcu.CONSTRAINT_NAME 
+                    AND COL_NAME(fkc.parent_object_id, fkc.parent_column_id) = kcu.COLUMN_NAME
+                WHERE OBJECT_NAME(fk.parent_object_id) = ?
+            ) fk ON c.COLUMN_NAME = fk.COLUMN_NAME
+            WHERE c.TABLE_NAME = ?
+            ORDER BY c.ORDINAL_POSITION
+        """
+        
+        results = self.execute_query(column_query, (table_name, table_name, table_name))
+        
+        columns = []
+        primary_keys = []
+        foreign_keys = []
+        
+        for row in results:
+            col_info = ColumnInfo(
+                name=row[0],
+                data_type=row[1],
+                is_nullable=(row[2] == 'YES'),
+                max_length=row[3],
+                numeric_precision=row[4],
+                numeric_scale=row[5],
+                is_primary_key=bool(row[6]),
+                is_foreign_key=bool(row[7]),
+                foreign_key_table=row[8],
+                foreign_key_column=row[9]
+            )
+            columns.append(col_info)
+            
+            if col_info.is_primary_key:
+                primary_keys.append(col_info.name)
+            
+            if col_info.is_foreign_key:
+                foreign_keys.append({
+                    'column': col_info.name,
+                    'references_table': col_info.foreign_key_table,
+                    'references_column': col_info.foreign_key_column
+                })
+        
+        return TableInfo(
+            name=table_name,
+            columns=columns,
+            primary_keys=primary_keys,
+            foreign_keys=foreign_keys
+        )
+    
+    def get_table_statistics(self, table_name: str) -> TableStats:
+        """Get statistical information about a table"""
+        # Get row count
+        count_query = f"SELECT COUNT(*) FROM [{table_name}]"
+        row_count = self.execute_query(count_query)[0][0]
+        
+        # Get column statistics
+        table_info = self.get_table_schema(table_name)
+        column_stats = {}
+        
+        for column in table_info.columns:
+            stats = {
+                'distinct_count': 0,
+                'null_count': 0,
+                'min_value': None,
+                'max_value': None,
+                'avg_value': None,
+                'sample_values': []
+            }
+            
+            try:
+                # Get distinct count and null count
+                stats_query = f"""
+                    SELECT 
+                        COUNT(DISTINCT [{column.name}]) as distinct_count,
+                        COUNT(*) - COUNT([{column.name}]) as null_count
+                    FROM [{table_name}]
+                """
+                result = self.execute_query(stats_query)[0]
+                stats['distinct_count'] = result[0]
+                stats['null_count'] = result[1]
+                
+                # Get min/max/avg for numeric and date types
+                if column.data_type in ['int', 'bigint', 'smallint', 'tinyint', 'numeric', 'decimal', 'float', 'real', 'money', 'smallmoney']:
+                    minmax_query = f"""
+                        SELECT MIN([{column.name}]), MAX([{column.name}]), AVG(CAST([{column.name}] AS FLOAT))
+                        FROM [{table_name}]
+                        WHERE [{column.name}] IS NOT NULL
+                    """
+                    result = self.execute_query(minmax_query)[0]
+                    stats['min_value'] = float(result[0]) if result[0] is not None else None
+                    stats['max_value'] = float(result[1]) if result[1] is not None else None
+                    stats['avg_value'] = float(result[2]) if result[2] is not None else None
+                
+                elif column.data_type in ['date', 'datetime', 'datetime2', 'smalldatetime', 'datetimeoffset']:
+                    minmax_query = f"""
+                        SELECT MIN([{column.name}]), MAX([{column.name}])
+                        FROM [{table_name}]
+                        WHERE [{column.name}] IS NOT NULL
+                    """
+                    result = self.execute_query(minmax_query)[0]
+                    stats['min_value'] = str(result[0]) if result[0] is not None else None
+                    stats['max_value'] = str(result[1]) if result[1] is not None else None
+                
+                # Get sample values (top 10 most common)
+                sample_query = f"""
+                    SELECT TOP 10 [{column.name}], COUNT(*) as cnt
+                    FROM [{table_name}]
+                    WHERE [{column.name}] IS NOT NULL
+                    GROUP BY [{column.name}]
+                    ORDER BY cnt DESC
+                """
+                results = self.execute_query(sample_query)
+                stats['sample_values'] = [str(row[0]) for row in results]
+                
+            except Exception as e:
+                print(f"Warning: Could not get statistics for column {column.name}: {e}")
+            
+            column_stats[column.name] = stats
+        
+        return TableStats(
+            table_name=table_name,
+            row_count=row_count,
+            column_stats=column_stats
+        )
+
+
 class SchemaAnalyzer:
     """Analyzes database schema and relationships"""
     
@@ -497,14 +708,14 @@ class TestDataGenerator:
         """Generate a value based on column data type"""
         data_type = column.data_type.lower()
         
-        # Integer types
-        if data_type in ['integer', 'int', 'smallint', 'bigint', 'serial', 'bigserial']:
+        # Integer types (PostgreSQL, MySQL, SQL Server)
+        if data_type in ['integer', 'int', 'smallint', 'bigint', 'tinyint', 'serial', 'bigserial']:
             min_val = int(col_stats.get('min_value', 1))
             max_val = int(col_stats.get('max_value', 1000))
             return random.randint(min_val, max_val)
         
-        # Floating point types
-        elif data_type in ['numeric', 'decimal', 'real', 'double precision', 'float', 'double']:
+        # Floating point types (PostgreSQL, MySQL, SQL Server)
+        elif data_type in ['numeric', 'decimal', 'real', 'double precision', 'float', 'double', 'money', 'smallmoney']:
             min_val = float(col_stats.get('min_value', 0.0))
             max_val = float(col_stats.get('max_value', 1000.0))
             value = random.uniform(min_val, max_val)
@@ -512,27 +723,33 @@ class TestDataGenerator:
                 return round(value, column.numeric_scale)
             return value
         
-        # String types
-        elif data_type in ['character varying', 'varchar', 'character', 'char', 'text']:
+        # String types (PostgreSQL, MySQL, SQL Server)
+        elif data_type in ['character varying', 'varchar', 'character', 'char', 'text', 'nvarchar', 'nchar', 'ntext']:
             length = min(column.max_length or 50, 50)
             return self._generate_random_string(length)
         
-        # Boolean
-        elif data_type in ['boolean', 'bool']:
+        # Boolean (PostgreSQL, MySQL, SQL Server)
+        elif data_type in ['boolean', 'bool', 'bit']:
             return random.choice([True, False])
         
-        # Date and time types
+        # Date types (PostgreSQL, MySQL, SQL Server)
         elif data_type in ['date']:
             min_date = datetime.now() - timedelta(days=365*5)
             max_date = datetime.now()
             random_date = min_date + timedelta(days=random.randint(0, 365*5))
             return random_date.date()
         
-        elif data_type in ['timestamp', 'timestamp without time zone', 'timestamp with time zone', 'datetime']:
+        # Timestamp/DateTime types (PostgreSQL, MySQL, SQL Server)
+        elif data_type in ['timestamp', 'timestamp without time zone', 'timestamp with time zone', 'datetime', 'datetime2', 'smalldatetime', 'datetimeoffset']:
             min_date = datetime.now() - timedelta(days=365*5)
             max_date = datetime.now()
             random_timestamp = min_date + timedelta(seconds=random.randint(0, int((max_date - min_date).total_seconds())))
             return random_timestamp
+        
+        # GUID/UUID types (PostgreSQL, SQL Server)
+        elif data_type in ['uuid', 'uniqueidentifier']:
+            import uuid
+            return str(uuid.uuid4())
         
         # Default fallback
         else:
@@ -618,6 +835,8 @@ def create_connector(db_type: str, connection_string: str) -> DatabaseConnector:
         'postgresql': PostgreSQLConnector,
         'postgres': PostgreSQLConnector,
         'mysql': MySQLConnector,
+        'sqlserver': SQLServerConnector,
+        'mssql': SQLServerConnector,
     }
     
     connector_class = connectors.get(db_type.lower())
@@ -642,11 +861,16 @@ Examples:
   python test_data_generator.py --db-type mysql \\
     --connection "mysql://user:password@localhost:3306/mydb" \\
     --num-rows 50 --output-json test_data.json
+
+  # SQL Server
+  python test_data_generator.py --db-type sqlserver \\
+    --connection "mssql://user:password@localhost:1433/mydb" \\
+    --num-rows 100 --output-sql test_data.sql
         """
     )
     
     parser.add_argument('--db-type', required=True, 
-                       choices=['postgresql', 'postgres', 'mysql'],
+                       choices=['postgresql', 'postgres', 'mysql', 'sqlserver', 'mssql'],
                        help='Database type')
     parser.add_argument('--connection', required=True,
                        help='Database connection string')

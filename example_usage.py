@@ -50,6 +50,51 @@ def example_postgresql():
         connector.disconnect()
 
 
+def example_sqlserver():
+    """Example: Generate test data from SQL Server database"""
+    
+    # 1. Create database connector
+    # Option 1: Simple connection string
+    connection_string = "mssql://user:password@localhost:1433/mydb"
+    
+    # Option 2: Full ODBC connection string (more flexible)
+    # connection_string = "Driver={ODBC Driver 17 for SQL Server};Server=localhost;Database=mydb;UID=user;PWD=password"
+    
+    connector = create_connector('sqlserver', connection_string)
+    
+    try:
+        # 2. Connect to database
+        connector.connect()
+        print("Connected to SQL Server database")
+        
+        # 3. Analyze schema
+        analyzer = SchemaAnalyzer(connector)
+        analyzer.analyze()
+        
+        # 4. Print schema summary
+        analyzer.print_schema_summary()
+        
+        # 5. Generate test data
+        generator = TestDataGenerator(analyzer)
+        generator.generate(num_rows_per_table=100)
+        
+        # 6. Export to files
+        generator.export_to_sql("output/sqlserver_test_data.sql")
+        generator.export_to_json("output/sqlserver_test_data.json")
+        
+        print("\nTest data generation complete!")
+        
+        # 7. Access generated data programmatically
+        for table_name, rows in generator.generated_data.items():
+            print(f"\n{table_name}: {len(rows)} rows generated")
+            if rows:
+                print(f"  Sample row: {rows[0]}")
+        
+    finally:
+        # 8. Cleanup
+        connector.disconnect()
+
+
 def example_schema_only():
     """Example: Only analyze schema without generating data"""
     
@@ -123,13 +168,16 @@ if __name__ == '__main__':
     
     # Uncomment the example you want to run:
     
-    # Example 1: Full data generation
+    # Example 1: Full data generation (PostgreSQL)
     # example_postgresql()
     
-    # Example 2: Schema analysis only
+    # Example 2: Full data generation (SQL Server)
+    # example_sqlserver()
+    
+    # Example 3: Schema analysis only
     # example_schema_only()
     
-    # Example 3: Custom generation logic
+    # Example 4: Custom generation logic
     # example_custom_generation()
     
     print("\nNote: Update connection strings before running examples")
