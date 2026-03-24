@@ -335,6 +335,8 @@ class SQLServerConnector(DatabaseConnector):
             import pyodbc
             # Parse connection string (format: mssql://user:password@host:port/database or full connection string)
             if 'Driver=' in self.connection_string or 'DRIVER=' in self.connection_string:
+                # print out the connection details
+                print(f"Connecting to SQL Server with connection string: {self.connection_string}")
                 # Full ODBC connection string
                 self.connection = pyodbc.connect(self.connection_string)
             else:
@@ -345,13 +347,15 @@ class SQLServerConnector(DatabaseConnector):
                 host_port = host_db[0].split(':')
                 
                 conn_str = (
-                    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+                    f"DRIVER={{ODBC Driver 18 for SQL Server}};"
                     f"SERVER={host_port[0]}"
                     f"{','+host_port[1] if len(host_port) > 1 else ''};"
                     f"DATABASE={host_db[1] if len(host_db) > 1 else ''};"
                     f"UID={user_pass[0]};"
                     f"PWD={user_pass[1] if len(user_pass) > 1 else ''}"
                 )
+                # print out the connection details
+                print(f"Connecting to SQL Server with connection string: {conn_str}")
                 self.connection = pyodbc.connect(conn_str)
             print(f"Connected to SQL Server database")
         except ImportError:
@@ -540,7 +544,7 @@ class SQLServerConnector(DatabaseConnector):
 class SchemaAnalyzer:
     """Analyzes database schema and relationships"""
     
-    def __init__(self, connector: DatabaseConnector):
+    def __init__(self, connector: Optional[DatabaseConnector] = None):
         self.connector = connector
         self.tables: Dict[str, TableInfo] = {}
         self.dependency_order: List[str] = []
@@ -612,6 +616,92 @@ class SchemaAnalyzer:
             for col in table.columns:
                 nullable = "NULL" if col.is_nullable else "NOT NULL"
                 print(f"    - {col.name} ({col.data_type}) {nullable}")
+    
+    def save_to_file(self, output_file: str):
+        """Save schema and statistics to a JSON file"""
+        print(f"\n=== Saving Schema to: {output_file} ===")
+        
+        schema_data = {
+            'metadata': {
+                'generated_at': datetime.now().isoformat(),
+                'total_tables': len(self.tables)
+            },
+            'dependency_order': self.dependency_order,
+            'tables': {}
+        }
+        
+        # Convert tables to dictionary format
+        for table_name, table_info in self.tables.items():
+            table_dict = {
+                'name': table_info.name,
+                'primary_keys': table_info.primary_keys,
+                'foreign_keys': table_info.foreign_keys,
+                'columns': [],
+                'stats': None
+            }
+            
+            # Convert columns
+            for col in table_info.columns:
+                col_dict = asdict(col)
+                table_dict['columns'].append(col_dict)
+            
+            # Convert stats
+            if table_info.stats:
+                table_dict['stats'] = {
+                    'table_name': table_info.stats.table_name,
+                    'row_count': table_info.stats.row_count,
+                    'column_stats': table_info.stats.column_stats
+                }
+            
+            schema_data['tables'][table_name] = table_dict
+        
+        # Write to file
+        with open(output_file, 'w') as f:
+            json.dump(schema_data, f, indent=2)
+        
+        print(f"Schema saved successfully: {output_file}")
+    
+    def load_from_file(self, input_file: str):
+        """Load schema and statistics from a JSON file"""
+        print(f"\n=== Loading Schema from: {input_file} ===")
+        
+        with open(input_file, 'r') as f:
+            schema_data = json.load(f)
+        
+        # Load dependency order
+        self.dependency_order = schema_data['dependency_order']
+        
+        # Load tables
+        self.tables = {}
+        for table_name, table_dict in schema_data['tables'].items():
+            # Reconstruct columns
+            columns = []
+            for col_dict in table_dict['columns']:
+                col = ColumnInfo(**col_dict)
+                columns.append(col)
+            
+            # Reconstruct stats
+            stats = None
+            if table_dict['stats']:
+                stats = TableStats(
+                    table_name=table_dict['stats']['table_name'],
+                    row_count=table_dict['stats']['row_count'],
+                    column_stats=table_dict['stats']['column_stats']
+                )
+            
+            # Create TableInfo
+            table_info = TableInfo(
+                name=table_dict['name'],
+                columns=columns,
+                primary_keys=table_dict['primary_keys'],
+                foreign_keys=table_dict['foreign_keys'],
+                stats=stats
+            )
+            
+            self.tables[table_name] = table_info
+        
+        print(f"Loaded {len(self.tables)} tables from {input_file}")
+        print(f"Table dependency order: {' -> '.join(self.dependency_order)}")
 
 
 class TestDataGenerator:
@@ -852,7 +942,16 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # PostgreSQL
+  # Analyze database and save schema
+  python test_data_generator.py --db-type postgresql \\
+    --connection "postgresql://user:password@localhost:5432/mydb" \\
+    --save-schema schema.json
+
+  # Generate data from saved schema
+  python test_data_generator.py --load-schema schema.json \\
+    --num-rows 100 --output-sql test_data.sql
+
+  # Single-step: analyze and generate
   python test_data_generator.py --db-type postgresql \\
     --connection "postgresql://user:password@localhost:5432/mydb" \\
     --num-rows 100 --output-sql test_data.sql
@@ -869,11 +968,11 @@ Examples:
         """
     )
     
-    parser.add_argument('--db-type', required=True, 
+    parser.add_argument('--db-type',
                        choices=['postgresql', 'postgres', 'mysql', 'sqlserver', 'mssql'],
-                       help='Database type')
-    parser.add_argument('--connection', required=True,
-                       help='Database connection string')
+                       help='Database type (required if --load-schema is not used)')
+    parser.add_argument('--connection',
+                       help='Database connection string (required if --load-schema is not used)')
     parser.add_argument('--num-rows', type=int, default=100,
                        help='Number of rows to generate per table (default: 100)')
     parser.add_argument('--output-sql', 
@@ -882,40 +981,64 @@ Examples:
                        help='Output JSON file path')
     parser.add_argument('--schema-only', action='store_true',
                        help='Only analyze and display schema without generating data')
+    parser.add_argument('--save-schema',
+                       help='Save analyzed schema and statistics to a JSON file')
+    parser.add_argument('--load-schema',
+                       help='Load schema and statistics from a previously saved JSON file')
     
     args = parser.parse_args()
     
     try:
-        # Create database connector
-        print(f"Database Type: {args.db_type}")
-        connector = create_connector(args.db_type, args.connection)
-        connector.connect()
+        analyzer = None
         
-        # Analyze schema
-        analyzer = SchemaAnalyzer(connector)
-        analyzer.analyze()
-        analyzer.print_schema_summary()
+        # Mode 1: Load schema from file
+        if args.load_schema:
+            print(f"Loading schema from file: {args.load_schema}")
+            analyzer = SchemaAnalyzer()
+            analyzer.load_from_file(args.load_schema)
+            analyzer.print_schema_summary()
         
-        if args.schema_only:
-            print("\n=== Schema analysis complete (--schema-only mode) ===")
-            return 0
+        # Mode 2: Connect to database and analyze
+        else:
+            if not args.db_type or not args.connection:
+                parser.error("--db-type and --connection are required when not using --load-schema")
+            
+            # Create database connector
+            print(f"Database Type: {args.db_type}")
+            connector = create_connector(args.db_type, args.connection)
+            connector.connect()
+            
+            # Analyze schema
+            analyzer = SchemaAnalyzer(connector)
+            analyzer.analyze()
+            analyzer.print_schema_summary()
+            
+            # Save schema if requested
+            if args.save_schema:
+                analyzer.save_to_file(args.save_schema)
+            
+            # Disconnect
+            connector.disconnect()
+            
+            # If only saving schema, exit here
+            if args.schema_only:
+                print("\n=== Schema analysis complete (--schema-only mode) ===")
+                return 0
         
-        # Generate test data
-        generator = TestDataGenerator(analyzer)
-        generator.generate(num_rows_per_table=args.num_rows)
-        
-        # Export data
-        if args.output_sql:
-            generator.export_to_sql(args.output_sql)
-        
-        if args.output_json:
-            generator.export_to_json(args.output_json)
-        
-        if not args.output_sql and not args.output_json:
-            print("\nWarning: No output format specified. Use --output-sql or --output-json to export data.")
-        
-        # Disconnect
-        connector.disconnect()
+        # Generate test data if not in schema-only mode
+        if not args.schema_only:
+            generator = TestDataGenerator(analyzer)
+            generator.generate(num_rows_per_table=args.num_rows)
+            
+            # Export data
+            if args.output_sql:
+                generator.export_to_sql(args.output_sql)
+            
+            if args.output_json:
+                generator.export_to_json(args.output_json)
+            
+            if not args.output_sql and not args.output_json:
+                print("\nWarning: No output format specified. Use --output-sql or --output-json to export data.")
         
         print("\n=== Complete ===")
         return 0

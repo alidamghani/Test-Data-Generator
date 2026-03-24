@@ -162,6 +162,51 @@ def example_custom_generation():
         connector.disconnect()
 
 
+def example_save_and_load_schema():
+    """Example: Save schema analysis and reuse for multiple data generation runs"""
+    
+    # Step 1: Analyze database once and save schema
+    print("=== Step 1: Analyzing and Saving Schema ===")
+    connection_string = "postgresql://user:password@localhost:5432/mydb"
+    connector = create_connector('postgresql', connection_string)
+    
+    try:
+        connector.connect()
+        
+        analyzer = SchemaAnalyzer(connector)
+        analyzer.analyze()
+        analyzer.print_schema_summary()
+        
+        # Save the schema to a file
+        analyzer.save_to_file("schema_cache.json")
+        
+        connector.disconnect()
+    except Exception as e:
+        print(f"Error during schema analysis: {e}")
+        return
+    
+    # Step 2: Load schema from file and generate data (can be run multiple times)
+    print("\n=== Step 2: Loading Schema and Generating Data ===")
+    
+    # Create analyzer without database connection
+    analyzer = SchemaAnalyzer()
+    analyzer.load_from_file("schema_cache.json")
+    
+    # Generate test data using the loaded schema
+    generator = TestDataGenerator(analyzer)
+    generator.generate(num_rows_per_table=500)
+    
+    # Export to different formats
+    generator.export_to_sql("output/test_data_run1.sql")
+    generator.export_to_json("output/test_data_run1.json")
+    
+    print("\n=== Benefits ===")
+    print("- No need to reconnect to database")
+    print("- Faster data generation for multiple runs")
+    print("- Can generate data offline")
+    print("- Can share schema files across team")
+
+
 if __name__ == '__main__':
     print("Test Data Generator - Library Usage Examples\n")
     print("=" * 60)
@@ -179,5 +224,8 @@ if __name__ == '__main__':
     
     # Example 4: Custom generation logic
     # example_custom_generation()
+    
+    # Example 5: Save schema and reuse for data generation
+    # example_save_and_load_schema()
     
     print("\nNote: Update connection strings before running examples")

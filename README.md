@@ -89,14 +89,43 @@ python test_data_generator.py \
   --output-sql test_data.sql
 ```
 
+### Schema Persistence Workflow
+
+The tool supports saving schema analysis results to a file and reusing them for data generation. This is useful when you need to generate test data multiple times without re-analyzing the database.
+
+**Step 1: Analyze database and save schema:**
+```bash
+python test_data_generator.py \
+  --db-type postgresql \
+  --connection "postgresql://user:password@localhost:5432/mydb" \
+  --save-schema schema.json
+```
+
+**Step 2: Generate data from saved schema (can run multiple times):**
+```bash
+python test_data_generator.py \
+  --load-schema schema.json \
+  --num-rows 100 \
+  --output-sql test_data.sql
+```
+
+**Benefits:**
+- No need to reconnect to the database for each data generation run
+- Faster data generation (skips schema analysis)
+- Can generate data offline or in environments without database access
+- Can share schema files across team members
+- Consistent data generation based on the same schema snapshot
+
 ### Command Line Arguments
 
-- `--db-type`: Database type (`postgresql`, `postgres`, `mysql`, `sqlserver`, or `mssql`) - **Required**
-- `--connection`: Database connection string - **Required**
+- `--db-type`: Database type (`postgresql`, `postgres`, `mysql`, `sqlserver`, or `mssql`) - **Required unless using --load-schema**
+- `--connection`: Database connection string - **Required unless using --load-schema**
 - `--num-rows`: Number of rows to generate per table (default: 100)
 - `--output-sql`: Path to output SQL file
 - `--output-json`: Path to output JSON file
 - `--schema-only`: Only analyze and display schema without generating data
+- `--save-schema`: Save analyzed schema and statistics to a JSON file
+- `--load-schema`: Load schema and statistics from a previously saved JSON file
 
 ### Examples
 
@@ -125,6 +154,23 @@ python test_data_generator.py \
   --connection "postgresql://user:pass@localhost/mydb" \
   --num-rows 10000 \
   --output-sql large_dataset.sql
+```
+
+**4. Save schema for later use:**
+```bash
+python test_data_generator.py \
+  --db-type postgresql \
+  --connection "postgresql://user:pass@localhost/mydb" \
+  --save-schema mydb_schema.json \
+  --schema-only
+```
+
+**5. Generate data from saved schema:**
+```bash
+python test_data_generator.py \
+  --load-schema mydb_schema.json \
+  --num-rows 500 \
+  --output-sql test_data.sql
 ```
 
 ## How It Works
