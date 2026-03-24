@@ -197,17 +197,38 @@ class PostgreSQLConnector(DatabaseConnector):
             foreign_keys=foreign_keys
         )
     
+    def _get_indexed_columns(self, table_name: str) -> set:
+        """Get list of columns that are part of any index"""
+        query = """
+            SELECT DISTINCT a.attname as column_name
+            FROM pg_index i
+            JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+            JOIN pg_class t ON t.oid = i.indrelid
+            WHERE t.relname = %s
+            AND t.relkind = 'r'
+        """
+        results = self.execute_query(query, (table_name,))
+        return {row[0] for row in results}
+    
     def get_table_statistics(self, table_name: str) -> TableStats:
-        """Get statistical information about a table"""
+        """Get statistical information about a table (only for indexed columns)"""
         # Get row count
         count_query = f"SELECT COUNT(*) FROM {table_name}"
         row_count = self.execute_query(count_query)[0][0]
+        
+        # Get indexed columns
+        indexed_columns = self._get_indexed_columns(table_name)
+        print(f"  Collecting statistics for {len(indexed_columns)} indexed columns")
         
         # Get column statistics
         table_info = self.get_table_schema(table_name)
         column_stats = {}
         
         for column in table_info.columns:
+            # Only collect statistics for indexed columns
+            if column.name not in indexed_columns:
+                continue
+            
             stats = {
                 'distinct_count': 0,
                 'null_count': 0,
@@ -464,17 +485,38 @@ class SQLServerConnector(DatabaseConnector):
             foreign_keys=foreign_keys
         )
     
+    def _get_indexed_columns(self, table_name: str) -> set:
+        """Get list of columns that are part of any index"""
+        query = """
+            SELECT DISTINCT c.name as column_name
+            FROM sys.indexes i
+            JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+            JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+            JOIN sys.tables t ON i.object_id = t.object_id
+            WHERE t.name = ?
+        """
+        results = self.execute_query(query, (table_name,))
+        return {row[0] for row in results}
+    
     def get_table_statistics(self, table_name: str) -> TableStats:
-        """Get statistical information about a table"""
+        """Get statistical information about a table (only for indexed columns)"""
         # Get row count
         count_query = f"SELECT COUNT(*) FROM [{table_name}]"
         row_count = self.execute_query(count_query)[0][0]
+        
+        # Get indexed columns
+        indexed_columns = self._get_indexed_columns(table_name)
+        print(f"  Collecting statistics for {len(indexed_columns)} indexed columns")
         
         # Get column statistics
         table_info = self.get_table_schema(table_name)
         column_stats = {}
         
         for column in table_info.columns:
+            # Only collect statistics for indexed columns
+            if column.name not in indexed_columns:
+                continue
+            
             stats = {
                 'distinct_count': 0,
                 'null_count': 0,
