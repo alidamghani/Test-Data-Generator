@@ -842,14 +842,14 @@ class TestDataGenerator:
         
         # Integer types (PostgreSQL, MySQL, SQL Server)
         if data_type in ['integer', 'int', 'smallint', 'bigint', 'tinyint', 'serial', 'bigserial']:
-            min_val = int(col_stats.get('min_value', 1))
-            max_val = int(col_stats.get('max_value', 1000))
+            min_val = int(col_stats.get('min_value') or 1)
+            max_val = int(col_stats.get('max_value') or 1000)
             return random.randint(min_val, max_val)
         
         # Floating point types (PostgreSQL, MySQL, SQL Server)
         elif data_type in ['numeric', 'decimal', 'real', 'double precision', 'float', 'double', 'money', 'smallmoney']:
-            min_val = float(col_stats.get('min_value', 0.0))
-            max_val = float(col_stats.get('max_value', 1000.0))
+            min_val = float(col_stats.get('min_value') or 0.0)
+            max_val = float(col_stats.get('max_value') or 1000.0)
             value = random.uniform(min_val, max_val)
             if column.numeric_scale:
                 return round(value, column.numeric_scale)
@@ -857,7 +857,11 @@ class TestDataGenerator:
         
         # String types (PostgreSQL, MySQL, SQL Server)
         elif data_type in ['character varying', 'varchar', 'character', 'char', 'text', 'nvarchar', 'nchar', 'ntext']:
-            length = min(column.max_length or 50, 50)
+            # Handle SQL Server varchar(max) which has max_length = -1
+            max_length = column.max_length
+            if max_length is None or max_length <= 0:
+                max_length = 50
+            length = min(max_length, 50)
             return self._generate_random_string(length)
         
         # Boolean (PostgreSQL, MySQL, SQL Server)
