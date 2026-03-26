@@ -842,8 +842,40 @@ class TestDataGenerator:
         
         # Integer types (PostgreSQL, MySQL, SQL Server)
         if data_type in ['integer', 'int', 'smallint', 'bigint', 'tinyint', 'serial', 'bigserial']:
-            min_val = int(col_stats.get('min_value') or 1)
-            max_val = int(col_stats.get('max_value') or 1000)
+            # Get min/max from stats or use type-specific defaults
+            min_val = col_stats.get('min_value')
+            max_val = col_stats.get('max_value')
+            
+            # Set type-specific limits if stats are not available
+            if data_type == 'tinyint':
+                # SQL Server tinyint: 0 to 255
+                default_min, default_max = 0, 255
+            elif data_type == 'smallint':
+                # SQL Server smallint: -32768 to 32767
+                default_min, default_max = -32768, 32767
+            elif data_type == 'bigint':
+                # Large range for bigint
+                default_min, default_max = 1, 1000000
+            else:
+                # Default for int/integer
+                default_min, default_max = 1, 1000
+            
+            # Use stats if available, otherwise use defaults
+            min_val = int(min_val) if min_val is not None else default_min
+            max_val = int(max_val) if max_val is not None else default_max
+            
+            # Ensure min/max are within type limits
+            if data_type == 'tinyint':
+                min_val = max(0, min(min_val, 255))
+                max_val = max(0, min(max_val, 255))
+            elif data_type == 'smallint':
+                min_val = max(-32768, min(min_val, 32767))
+                max_val = max(-32768, min(max_val, 32767))
+            
+            # Ensure min <= max
+            if min_val > max_val:
+                min_val, max_val = max_val, min_val
+            
             return random.randint(min_val, max_val)
         
         # Floating point types (PostgreSQL, MySQL, SQL Server)
