@@ -14,7 +14,7 @@ from typing import Dict, List, Any, Tuple, Optional
 from dataclasses import dataclass, asdict
 from collections import defaultdict
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 
 @dataclass
@@ -933,6 +933,15 @@ class TestDataGenerator:
                         elif isinstance(val, bool):
                             values.append('TRUE' if val else 'FALSE')
                         elif isinstance(val, datetime):
+                            # Format datetime with milliseconds (3 digits) instead of microseconds (6 digits)
+                            # This is compatible with SQL Server datetime2(3)
+                            dt_str = val.strftime('%Y-%m-%dT%H:%M:%S')
+                            # Add milliseconds (3 digits)
+                            milliseconds = val.microsecond // 1000
+                            dt_str += f'.{milliseconds:03d}'
+                            values.append(f"'{dt_str}'")
+                        elif isinstance(val, date):
+                            # Handle date without time component
                             values.append(f"'{val.isoformat()}'")
                         else:
                             values.append(str(val))
