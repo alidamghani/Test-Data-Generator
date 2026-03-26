@@ -213,7 +213,7 @@ class PostgreSQLConnector(DatabaseConnector):
     def get_table_statistics(self, table_name: str) -> TableStats:
         """Get statistical information about a table (only for indexed columns)"""
         # Get row count
-        count_query = f"SELECT COUNT(*) FROM {table_name}"
+        count_query = f'SELECT COUNT(*) FROM "{table_name}"'
         row_count = self.execute_query(count_query)[0][0]
         
         # Get indexed columns
@@ -242,9 +242,9 @@ class PostgreSQLConnector(DatabaseConnector):
                 # Get distinct count and null count
                 stats_query = f"""
                     SELECT 
-                        COUNT(DISTINCT {column.name}) as distinct_count,
-                        COUNT(*) - COUNT({column.name}) as null_count
-                    FROM {table_name}
+                        COUNT(DISTINCT "{column.name}") as distinct_count,
+                        COUNT(*) - COUNT("{column.name}") as null_count
+                    FROM "{table_name}"
                 """
                 result = self.execute_query(stats_query)[0]
                 stats['distinct_count'] = result[0]
@@ -253,9 +253,9 @@ class PostgreSQLConnector(DatabaseConnector):
                 # Get min/max/avg for numeric and date types
                 if column.data_type in ['integer', 'bigint', 'smallint', 'numeric', 'real', 'double precision', 'decimal']:
                     minmax_query = f"""
-                        SELECT MIN({column.name}), MAX({column.name}), AVG({column.name})
-                        FROM {table_name}
-                        WHERE {column.name} IS NOT NULL
+                        SELECT MIN("{column.name}"), MAX("{column.name}"), AVG("{column.name}")
+                        FROM "{table_name}"
+                        WHERE "{column.name}" IS NOT NULL
                     """
                     result = self.execute_query(minmax_query)[0]
                     stats['min_value'] = float(result[0]) if result[0] is not None else None
@@ -264,9 +264,9 @@ class PostgreSQLConnector(DatabaseConnector):
                 
                 elif column.data_type in ['date', 'timestamp', 'timestamp without time zone', 'timestamp with time zone']:
                     minmax_query = f"""
-                        SELECT MIN({column.name}), MAX({column.name})
-                        FROM {table_name}
-                        WHERE {column.name} IS NOT NULL
+                        SELECT MIN("{column.name}"), MAX("{column.name}")
+                        FROM "{table_name}"
+                        WHERE "{column.name}" IS NOT NULL
                     """
                     result = self.execute_query(minmax_query)[0]
                     stats['min_value'] = str(result[0]) if result[0] is not None else None
@@ -274,10 +274,10 @@ class PostgreSQLConnector(DatabaseConnector):
                 
                 # Get sample values (top 10 most common)
                 sample_query = f"""
-                    SELECT {column.name}, COUNT(*) as cnt
-                    FROM {table_name}
-                    WHERE {column.name} IS NOT NULL
-                    GROUP BY {column.name}
+                    SELECT "{column.name}", COUNT(*) as cnt
+                    FROM "{table_name}"
+                    WHERE "{column.name}" IS NOT NULL
+                    GROUP BY "{column.name}"
                     ORDER BY cnt DESC
                     LIMIT 10
                 """
@@ -937,7 +937,9 @@ class TestDataGenerator:
                         else:
                             values.append(str(val))
                     
-                    f.write(f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({', '.join(values)});\n")
+                    # Quote table and column names for SQL compatibility
+                    quoted_columns = [f'"{col}"' for col in columns]
+                    f.write(f'INSERT INTO "{table_name}" ({", ".join(quoted_columns)}) VALUES ({", ".join(values)});\n')
         
         print(f"SQL export completed: {output_file}")
     
