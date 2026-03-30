@@ -156,23 +156,6 @@ python test_data_generator.py \
   --output-sql large_dataset.sql
 ```
 
-**4. Save schema for later use:**
-```bash
-python test_data_generator.py \
-  --db-type postgresql \
-  --connection "postgresql://user:pass@localhost/mydb" \
-  --save-schema mydb_schema.json \
-  --schema-only
-```
-
-**5. Generate data from saved schema:**
-```bash
-python test_data_generator.py \
-  --load-schema mydb_schema.json \
-  --num-rows 500 \
-  --output-sql test_data.sql
-```
-
 ## How It Works
 
 ### 1. Database Connection
