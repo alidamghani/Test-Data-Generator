@@ -1,0 +1,15 @@
+{
+  "database": {
+    "type": "postgresql",
+    "connection_string": "postgresql://username:password@localhost:5432/database_name"
+  },
+  "generation": {
+    "num_rows_per_table": 100,
+    "respect_foreign_keys": true,
+    "maintain_referential_integrity": true
+  },
+  "output": {
+    "sql_file": "output/test_data.sql",
+    "json_file": "output/test_data.json"
+  }
+}
